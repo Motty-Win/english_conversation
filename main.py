@@ -1,23 +1,15 @@
-import streamlit as st
 import os
 import time
-from time import sleep
 from pathlib import Path
-from streamlit.components.v1 import html
-from langchain.memory import ConversationSummaryBufferMemory
-from langchain.chains import ConversationChain
-from langchain.prompts import (
-    ChatPromptTemplate,
-    HumanMessagePromptTemplate,
-    MessagesPlaceholder,
-)
-from langchain.schema import SystemMessage
-from openai import OpenAI, BadRequestError  # 修正: v1系の例外もこちらから
-from langchain_openai import ChatOpenAI
-from dotenv import load_dotenv
-import functions as ft
-import constants as ct
 
+import streamlit as st
+from dotenv import load_dotenv
+from langchain.memory import ConversationSummaryBufferMemory
+from langchain_openai import ChatOpenAI
+from openai import BadRequestError, OpenAI  # 修正: v1系の例外もこちらから
+
+import constants as ct
+import functions as ft
 
 # 各種設定
 load_dotenv()
@@ -69,9 +61,8 @@ if "openai_obj" not in st.session_state:  # 修正: openai_client を openai_obj
 # ChatOpenAI のモデル名を確認
 try:
     st.session_state.llm = ChatOpenAI(
-        model_name="gpt-4o-mini",
+        model="gpt-4o-mini",
         temperature=0,  # 精度を上げるために温度を下げる
-        max_tokens=500,  # 応答の長さを制限
     )
 except ValueError as e:
     st.error(f"モデル名が正しくありません: {e}")
@@ -132,11 +123,6 @@ with col4:
     st.session_state.englv = st.selectbox(
         label="英語レベル",
         options=ct.ENGLISH_LEVEL_OPTION,
-        label_visibility="collapsed",
-    )
-    st.session_state.voice = st.selectbox(
-        label="声の種類",
-        options=ct.VOICE_OPTION,
         label_visibility="collapsed",
     )
 
@@ -279,9 +265,14 @@ if st.session_state.start_flg:
         # 音声入力テキストの画面表示
         with st.chat_message("user", avatar=ct.USER_ICON_PATH):  # 修正: アイコンを固定
             st.markdown(audio_input_text)
+            # ユーザー返答の日本語訳を表示
+            with st.expander("日本語訳を表示"):
+                with st.spinner("翻訳中..."):
+                    translated_user_text = ft.translate_text(audio_input_text)
+                    st.markdown(translated_user_text)
 
         with st.spinner("回答の音声読み上げ準備中..."):
-            voice_type = "alloy" if st.session_state.voice == "男性" else "nova"
+            voice_type = "nova"  # 女性の声に固定
             client = st.session_state.openai_obj
             try:
                 # 1) テキスト応答
@@ -296,7 +287,7 @@ if st.session_state.start_flg:
                 speech = client.audio.speech.create(
                     model="tts-1",
                     voice=voice_type,
-                    input=llm_response_text,
+                    input=llm_response_text,  # type: ignore
                     response_format="wav",
                 )
 
@@ -319,7 +310,7 @@ if st.session_state.start_flg:
             # 日本語翻訳ボタン
             with st.expander("日本語訳を表示"):
                 with st.spinner("翻訳中..."):
-                    translated_text = ft.translate_text(llm_response_text)
+                    translated_text = ft.translate_text(llm_response_text)  # type: ignore
                     st.markdown(translated_text)
 
         # ユーザー入力値とLLMからの回答をメッセージ一覧に追加
