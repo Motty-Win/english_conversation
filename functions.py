@@ -8,7 +8,7 @@ import os
 import subprocess
 import time
 import wave
-from typing import Any, Tuple
+from typing import Tuple
 
 import pyaudio
 import streamlit as st
@@ -20,6 +20,8 @@ from langchain.prompts import (
     MessagesPlaceholder,
 )
 from langchain.schema import SystemMessage
+from openai import BadRequestError
+from openai.types.audio import Transcription
 from pydub import AudioSegment
 
 import constants as ct
@@ -40,6 +42,8 @@ def record_audio(audio_input_file_path: str) -> None:
         icon_size="2x",
         recording_color="#e8b62c",
         neutral_color="#6c757d",
+        pause_threshold=3.0,  # 3秒の無音で録音終了
+        sample_rate=16000,
     )
 
     if audio is not None and len(audio) > 0:
@@ -49,7 +53,7 @@ def record_audio(audio_input_file_path: str) -> None:
         st.stop()
 
 
-def transcribe_audio(audio_input_file_path: str) -> Any:
+def transcribe_audio(audio_input_file_path: str) -> Transcription:
     """
     音声ファイルから文字起こしテキストを取得する
 
@@ -62,15 +66,56 @@ def transcribe_audio(audio_input_file_path: str) -> Any:
     Note:
         処理完了後、音声入力ファイルは自動的に削除されます。
     """
-    with open(audio_input_file_path, "rb") as audio_input_file:
-        transcript = st.session_state.openai_obj.audio.transcriptions.create(
-            model="whisper-1", file=audio_input_file, language="en"
-        )
+    try:
+        # 音声ファイルの存在と内容を確認
+        if not os.path.exists(audio_input_file_path):
+            st.error("音声ファイルが見つかりません。")
+            st.stop()
 
-    # 音声入力ファイルを削除
-    os.remove(audio_input_file_path)
+        file_size = os.path.getsize(audio_input_file_path)
+        if file_size == 0:
+            os.remove(audio_input_file_path)
+            st.error("音声ファイルが空です。録音ボタンを押して音声を録音してください。")
+            st.stop()
 
-    return transcript
+        # 音声ファイルの長さを確認
+        audio = AudioSegment.from_file(audio_input_file_path)
+        duration_seconds = len(audio) / 1000.0  # ミリ秒から秒に変換
+
+        # 音声が短すぎる場合はエラーを表示
+        if duration_seconds < 0.1:
+            os.remove(audio_input_file_path)
+            st.error(f"録音時間が短すぎます（{duration_seconds:.2f}秒）。最低0.1秒以上の音声を録音してください。")
+            st.info("「発話開始」ボタンを押して、音声を録音してから停止ボタンを押してください。")
+            st.stop()
+
+        with open(audio_input_file_path, "rb") as audio_input_file:
+            transcript = st.session_state.openai_obj.audio.transcriptions.create(
+                model="whisper-1", file=audio_input_file, language="en"
+            )
+
+        # 音声入力ファイルを削除
+        os.remove(audio_input_file_path)
+
+        return transcript
+
+    except BadRequestError as e:
+        # 音声入力ファイルを削除
+        if os.path.exists(audio_input_file_path):
+            os.remove(audio_input_file_path)
+
+        if "audio_too_short" in str(e):
+            st.error("録音時間が短すぎます。最低0.1秒以上の音声を録音してください。")
+            st.info("「発話開始」ボタンを押して、音声を録音してから停止ボタンを押してください。")
+        else:
+            st.error(f"音声認識中にエラーが発生しました: {e}")
+        st.stop()
+    except Exception as e:
+        # その他のエラー処理
+        if os.path.exists(audio_input_file_path):
+            os.remove(audio_input_file_path)
+        st.error(f"音声処理中にエラーが発生しました: {e}")
+        st.stop()
 
 
 def save_to_wav(audio_content: bytes, wav_file_path: str) -> None:
@@ -194,7 +239,7 @@ def create_chain(system_template: str) -> ConversationChain:
     return chain
 
 
-def create_problem_and_play_audio() -> Tuple[str, Any]:
+def create_problem_and_play_audio() -> Tuple[str, bytes]:
     """
     問題文を生成し、音声で読み上げる
 
